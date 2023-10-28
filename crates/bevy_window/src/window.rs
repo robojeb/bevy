@@ -4,6 +4,7 @@ use bevy_ecs::{
 };
 use bevy_math::{DVec2, IVec2, Vec2};
 use bevy_reflect::{std_traits::ReflectDefault, Reflect};
+use std::sync::Arc;
 
 #[cfg(feature = "serialize")]
 use bevy_reflect::{ReflectDeserialize, ReflectSerialize};
@@ -1069,6 +1070,29 @@ impl Default for EnabledButtons {
             maximize: true,
             close: true,
         }
+    }
+}
+
+/// A Token to track the presence of an active rendering surface for this Window.
+///
+/// The rendering back-end will hold a copy of this Token while the surface is
+/// active. The Window should be kept alive until [is_safe_to_close_window()]
+/// returns `true`
+#[derive(Debug, Component, Clone, Default)]
+#[cfg_attr(
+    feature = "serialize",
+    derive(serde::Serialize, serde::Deserialize),
+    reflect(Serialize, Deserialize)
+)]
+pub struct SurfaceToken {
+    state: Arc<()>,
+}
+
+impl SurfaceToken {
+    /// Check if this [SurfaceToken] is unique and thus the Window can be
+    /// closed.
+    pub fn is_safe_to_close_window(&self) -> bool {
+        dbg!(Arc::strong_count(&self.state)) == 1
     }
 }
 

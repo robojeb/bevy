@@ -106,11 +106,14 @@ impl Plugin for WindowPlugin {
                 .world
                 .spawn(primary_window.clone())
                 .insert(PrimaryWindow)
+                .insert(SurfaceToken::default())
                 .id();
             if let Some(mut focus) = app.world.get_resource_mut::<Focus>() {
                 **focus = Some(initial_focus);
             }
         }
+
+        app.add_systems(Last, fixup_window_surface);
 
         match self.exit_condition {
             ExitCondition::OnPrimaryClosed => {

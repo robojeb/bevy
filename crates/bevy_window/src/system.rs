@@ -1,8 +1,9 @@
-use crate::{PrimaryWindow, Window, WindowCloseRequested};
+use crate::{PrimaryWindow, SurfaceToken, Window, WindowCloseRequested};
 
 use bevy_app::AppExit;
 use bevy_ecs::prelude::*;
 use bevy_input::{keyboard::KeyCode, Input};
+use bevy_utils::HashSet;
 
 /// Exit the application when there are no open windows.
 ///
@@ -40,10 +41,34 @@ pub fn exit_on_primary_closed(
 /// Ensure that you read the caveats documented on that field if doing so.
 ///
 /// [`WindowPlugin`]: crate::WindowPlugin
-pub fn close_when_requested(mut commands: Commands, mut closed: EventReader<WindowCloseRequested>) {
+pub fn close_when_requested(
+    mut commands: Commands,
+    tokens: Query<&SurfaceToken>,
+    mut closed: EventReader<WindowCloseRequested>,
+    mut waiting_to_close: Local<HashSet<Entity>>,
+) {
     for event in closed.read() {
-        commands.entity(event.window).despawn();
+        if let Ok(token) = tokens.get(event.window) {
+            // Check if that is okay
+            if token.is_safe_to_close_window() {
+                commands.entity(event.window).despawn();
+            } else {
+                // Stash for later when the renderer cleans up the surface
+                waiting_to_close.insert(event.window);
+            }
+        }
     }
+
+    waiting_to_close.retain(|window_entity| {
+        if let Ok(token) = tokens.get(*window_entity) {
+            if token.is_safe_to_close_window() {
+                commands.entity(*window_entity).despawn();
+                return false;
+            }
+        }
+
+        true
+    })
 }
 
 /// Close the focused window whenever the escape key (<kbd>Esc</kbd>) is pressed
@@ -63,4 +88,15 @@ pub fn close_on_esc(
             commands.entity(window).despawn();
         }
     }
+}
+
+/// Windows need to hold on to a unique [SurfaceToken] to know if they are able
+/// to be despawned
+pub fn fixup_window_surface(
+    mut commands: Commands,
+    missing_surface_token: Query<Entity, (With<Window>, Without<SurfaceToken>)>,
+) {
+    missing_surface_token.for_each(|entity| {
+        commands.entity(entity).insert(SurfaceToken::default());
+    });
 }

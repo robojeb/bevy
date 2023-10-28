@@ -10,7 +10,8 @@ use bevy_app::{App, Plugin};
 use bevy_ecs::prelude::*;
 use bevy_utils::{default, tracing::debug, HashMap, HashSet};
 use bevy_window::{
-    CompositeAlphaMode, PresentMode, PrimaryWindow, RawHandleWrapper, Window, WindowClosed,
+    CompositeAlphaMode, PresentMode, PrimaryWindow, RawHandleWrapper, SurfaceToken, Window,
+    WindowCloseRequested,
 };
 use std::{
     ops::{Deref, DerefMut},
@@ -71,6 +72,7 @@ pub struct ExtractedWindow {
     pub present_mode_changed: bool,
     pub alpha_mode: CompositeAlphaMode,
     pub screenshot_func: Option<screenshot::ScreenshotFn>,
+    pub surface_token: SurfaceToken,
 }
 
 impl ExtractedWindow {
@@ -109,12 +111,20 @@ impl DerefMut for ExtractedWindows {
 fn extract_windows(
     mut extracted_windows: ResMut<ExtractedWindows>,
     screenshot_manager: Extract<Res<ScreenshotManager>>,
-    mut closed: Extract<EventReader<WindowClosed>>,
-    windows: Extract<Query<(Entity, &Window, &RawHandleWrapper, Option<&PrimaryWindow>)>>,
+    mut closed: Extract<EventReader<WindowCloseRequested>>,
+    windows: Extract<
+        Query<(
+            Entity,
+            &Window,
+            &SurfaceToken,
+            &RawHandleWrapper,
+            Option<&PrimaryWindow>,
+        )>,
+    >,
     mut removed: Extract<RemovedComponents<RawHandleWrapper>>,
     mut window_surfaces: ResMut<WindowSurfaces>,
 ) {
-    for (entity, window, handle, primary) in windows.iter() {
+    for (entity, window, surface_token, handle, primary) in windows.iter() {
         if primary.is_some() {
             extracted_windows.primary = Some(entity);
         }
@@ -124,21 +134,24 @@ fn extract_windows(
             window.resolution.physical_height().max(1),
         );
 
-        let extracted_window = extracted_windows.entry(entity).or_insert(ExtractedWindow {
-            entity,
-            handle: handle.clone(),
-            physical_width: new_width,
-            physical_height: new_height,
-            present_mode: window.present_mode,
-            swap_chain_texture: None,
-            swap_chain_texture_view: None,
-            size_changed: false,
-            swap_chain_texture_format: None,
-            present_mode_changed: false,
-            alpha_mode: window.composite_alpha_mode,
-            screenshot_func: None,
-            screenshot_memory: None,
-        });
+        let extracted_window = extracted_windows
+            .entry(entity)
+            .or_insert_with(|| ExtractedWindow {
+                entity,
+                handle: handle.clone(),
+                physical_width: new_width,
+                physical_height: new_height,
+                present_mode: window.present_mode,
+                swap_chain_texture: None,
+                swap_chain_texture_view: None,
+                size_changed: false,
+                swap_chain_texture_format: None,
+                present_mode_changed: false,
+                alpha_mode: window.composite_alpha_mode,
+                screenshot_func: None,
+                screenshot_memory: None,
+                surface_token: surface_token.clone(),
+            });
 
         // NOTE: Drop the swap chain frame here
         extracted_window.swap_chain_texture_view = None;
@@ -169,12 +182,12 @@ fn extract_windows(
     }
 
     for closed_window in closed.read() {
-        extracted_windows.remove(&closed_window.window);
         window_surfaces.remove(&closed_window.window);
+        extracted_windows.remove(&closed_window.window);
     }
     for removed_window in removed.read() {
-        extracted_windows.remove(&removed_window);
         window_surfaces.remove(&removed_window);
+        extracted_windows.remove(&removed_window);
     }
     // This lock will never block because `callbacks` is `pub(crate)` and this is the singular callsite where it's locked.
     // Even if a user had multiple copies of this system, since the system has a mutable resource access the two systems would never run
